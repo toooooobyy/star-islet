@@ -185,7 +185,7 @@
   <div id="pnMeta"></div>
   <div id="pnBody"></div>
 </div>
-<div id="hint">方向键转向 · 滚轮前进/后退 · 点星标前往板块 · 长按/右键星标直接阅读 · [ESC]关闭面板/中止航行</div>
+<div id="hint">↑↓ 加速/倒退 · ←→ 转向 · Shift+↑↓ 俯仰 · 滚轮/双指调速 · 点星标前往板块 · 长按/右键星标直接阅读 · [ESC]关闭面板/中止航行</div>
 <div id="credit">恒星数据：HYG Database v4.1 (CC BY-SA 4.0) · astronexus · 板块内容见 content.js</div>
 <script src="content.js"></script>
 <script>
@@ -389,6 +389,9 @@
   var manualWarp = 0;          // signed manual speed level -10..10 (v2.2 manual flight)
   var travelD0 = 1;            // trip distance at start (v2.4: declared with the other nav state)
   var keysOn = {};             // steering keys held down
+  var shiftOn = false;         // v0.4: Shift turns ↑/↓ into pitch trim
+  var yawVel = 0, pitchVel = 0, prevYaw = 0, prevPitch = 0;   // v0.4: attitude rates for chase-cam feedback
+  var shipBank = 0, shipPY = 0, shipSc = 1;                   // v0.4: smoothed ship pose (roll / lift / zoom)
 
   function warpToSpeed(w) {
     return w <= 0 ? 0 : 0.35 * Math.pow(2.6, w);
@@ -570,7 +573,7 @@
     manualWarp = Math.max(-10, Math.min(10, w));
     warpLevel = Math.max(0, manualWarp);
     warpEl.value = warpLevel.toFixed(2);
-    if (manualWarp < 0 && prev >= 0) toast('倒退推进 · 滚轮上拉/双指张开返回前进');
+    if (manualWarp < 0 && prev >= 0) toast('倒退推进 · ↑键/滚轮上拉/双指张开返回前进');
     wake();
   }
 
@@ -662,9 +665,13 @@
     }
     if (e.key === 's' || e.key === 'S') { params.glyphOn = !params.glyphOn; $('glyphOn').checked = params.glyphOn; shipDirty = true; saveParams(); wake(); }
     if (e.key.indexOf('Arrow') === 0) { keysOn[e.key] = true; e.preventDefault(); wake(); }
+    if (e.key === 'Shift') shiftOn = true;
   });
-  window.addEventListener('keyup', function (e) { if (e.key.indexOf('Arrow') === 0) { keysOn[e.key] = false; wake(); } });
-  window.addEventListener('blur', function () { keysOn = {}; });
+  window.addEventListener('keyup', function (e) {
+    if (e.key.indexOf('Arrow') === 0) { keysOn[e.key] = false; wake(); }
+    if (e.key === 'Shift') shiftOn = false;
+  });
+  window.addEventListener('blur', function () { keysOn = {}; shiftOn = false; });
   document.addEventListener('gesturestart', function (e) { e.preventDefault(); });   // block iOS page zoom during pinch
 
   // params UI
@@ -1026,38 +1033,53 @@
   var FORCE = 5.6, SPRING = 0.045, DAMP = 0.865;
   var maxV2 = 1;
   // ================= engine flames =================
+  // v0.4 chase-cam grammar: the bloom expands TOWARD the camera (petals radiate outward in
+  // screen space). The old downward tail read as a top-down scroller and fought the 3D tunnel.
   function renderFlame() {
-    var lv = Math.max(0, Math.min(1, (Math.abs(vNow) - 0.4) / 500));
+    var fwd = Math.max(0, Math.min(1, (vNow - 0.4) / 420));
+    var rev = vNow < -0.4 ? Math.min(1, (-vNow - 0.4) / 420) : 0;
+    var tF = performance.now() / 1000;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'lighter';
     for (var n = 0; n < NOZZLES.length; n++) {
-      var baseR = Math.max(4, (NOZZLES[n][2] || 40) * scale);
-      var nx = offX + NOZZLES[n][0] * scale + (Math.random() - 0.5) * 2.5;
-      var ny = offY + NOZZLES[n][1] * scale;
-      var fy = ny + baseR * 2.2;                               // flame starts at nozzle bell edge
-      var fl = Math.random();
-      var L = lv > 0 ? baseR * (2.2 + lv * 15) * (0.82 + fl * 0.36) : baseR * (0.9 + fl * 0.5);
-      var wR = lv > 0 ? baseR * (0.9 + lv * 0.55) : baseR * 0.5;
-      var gR = baseR * (1.6 + lv * 1.4);                       // nozzle glow
+      var baseR = Math.max(3, (NOZZLES[n][2] || 40) * scale);
+      var nx = offX + NOZZLES[n][0] * scale + (Math.random() - 0.5) * 1.6;
+      var ny = offY + NOZZLES[n][1] * scale + (Math.random() - 0.5) * 1.6;
+      // breathing bell glow at rest, expanding bloom under thrust
+      var gR = baseR * (1.7 + fwd * 2.8) * (0.94 + 0.12 * Math.sin(tF * 9 + n * 1.7));
+      var a0 = 0.30 + fwd * 0.55;
       var gr = ctx.createRadialGradient(nx, ny, 0, nx, ny, gR);
-      gr.addColorStop(0, lv > 0 ? 'rgba(255,190,110,' + (0.55 + 0.3 * lv).toFixed(2) + ')' : 'rgba(255,170,90,0.28)');
-      gr.addColorStop(1, 'rgba(255,120,40,0)');
+      gr.addColorStop(0, 'rgba(255,235,190,' + a0.toFixed(2) + ')');
+      gr.addColorStop(0.45, 'rgba(255,170,80,' + (a0 * 0.5).toFixed(2) + ')');
+      gr.addColorStop(1, 'rgba(255,110,40,0)');
       ctx.fillStyle = gr;
       ctx.beginPath(); ctx.arc(nx, ny, gR, 0, 7); ctx.fill();
-      var layers = lv > 0                                     // outer orange -> mid yellow -> blue-white core
-        ? [[1, 'rgba(255,110,30,0.5)'], [0.66, 'rgba(255,205,110,0.75)'], [0.38, 'rgba(225,240,255,0.95)']]
-        : [[1, 'rgba(255,150,60,0.4)'], [0.5, 'rgba(255,220,150,0.6)']];
-      for (var li = 0; li < layers.length; li++) {
-        var fw = wR * layers[li][0], fL = L * (li === 0 ? 1 : (li === 1 ? 0.8 : 0.62));
-        var lg = ctx.createLinearGradient(nx, fy, nx, fy + fL);
-        lg.addColorStop(0, layers[li][1]);
-        lg.addColorStop(1, 'rgba(255,80,20,0)');
-        ctx.fillStyle = lg;
-        ctx.beginPath();
-        ctx.moveTo(nx - fw, fy);
-        ctx.quadraticCurveTo(nx - fw * 0.3, fy + fL * 0.6, nx, fy + fL);
-        ctx.quadraticCurveTo(nx + fw * 0.3, fy + fL * 0.6, nx + fw, fy);
-        ctx.closePath(); ctx.fill();
+      // white-hot throat
+      ctx.fillStyle = 'rgba(255,246,214,' + (0.45 + fwd * 0.5).toFixed(2) + ')';
+      ctx.beginPath(); ctx.arc(nx, ny, baseR * (0.5 + fwd * 0.55), 0, 7); ctx.fill();
+      // petals: exhaust sparks rushing past the viewer, radiating from the nozzle centre
+      if (fwd > 0.02) {
+        var petals = 3 + ((fwd * 7) | 0);
+        for (var pt = 0; pt < petals; pt++) {
+          var ang = Math.random() * 6.2832;
+          var r0 = baseR * (0.7 + Math.random() * 0.5);
+          var r1 = baseR * (1.1 + Math.random() * 1.6 + fwd * 2.8);
+          var lg = ctx.createLinearGradient(nx + Math.cos(ang) * r0, ny + Math.sin(ang) * r0,
+                                            nx + Math.cos(ang) * r1, ny + Math.sin(ang) * r1);
+          lg.addColorStop(0, 'rgba(255,215,130,0.85)');
+          lg.addColorStop(1, 'rgba(255,110,30,0)');
+          ctx.strokeStyle = lg; ctx.lineWidth = Math.max(1, baseR * 0.28);
+          ctx.beginPath();
+          ctx.moveTo(nx + Math.cos(ang) * r0, ny + Math.sin(ang) * r0);
+          ctx.lineTo(nx + Math.cos(ang) * r1, ny + Math.sin(ang) * r1);
+          ctx.stroke();
+        }
+      }
+      // reverse thrust: faint cool counter-flow ring
+      if (rev > 0.02) {
+        ctx.strokeStyle = 'rgba(150,195,255,' + (0.25 * rev).toFixed(2) + ')';
+        ctx.lineWidth = Math.max(1, baseR * 0.2);
+        ctx.beginPath(); ctx.arc(nx, ny, baseR * (1.5 + rev * 1.6), 0, 7); ctx.stroke();
       }
     }
     renderNavLights();                       // v0.3: wingtip strobes / nose beacon (additive)
@@ -1087,6 +1109,50 @@
     }
   }
   var shipDirty = true;   // ship is static now: repaint only on glyph toggle / resize
+  // v0.4: tunnel speed lines — faint radial streaks rushing past the cockpit at high speed.
+  // Anchors the "flying INTO the screen" grammar that the vanishing point (hidden by the
+  // ship) used to leave ambiguous.
+  var SLN = 110, slAng = new Float32Array(SLN), slR = new Float32Array(SLN),
+      slSp = new Float32Array(SLN), slLen = new Float32Array(SLN), slInit = false;
+  function renderSpeedLines(dt) {
+    var gain = Math.max(0, Math.min(1, (Math.abs(vNow) - 25) / 900)) * params.trailGain;
+    if (gain <= 0.02) { slInit = false; return; }
+    var cx = W / 2, cy = H / 2, maxR = Math.hypot(W, H) / 2, r0 = Math.min(W, H) * 0.22;
+    if (!slInit) {
+      for (var i2 = 0; i2 < SLN; i2++) {
+        slAng[i2] = Math.random() * 6.2832;
+        slR[i2] = r0 + Math.random() * (maxR - r0);
+        slSp[i2] = 0.55 + Math.random() * 0.9;
+        slLen[i2] = 0.05 + Math.random() * 0.12;
+      }
+      slInit = true;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 1.4;
+    var v = (0.35 + gain * 1.1) * maxR * 1.9;
+    for (var i = 0; i < SLN; i++) {
+      slR[i] += slSp[i] * v * dt;
+      if (slR[i] > maxR) {                       // respawn near the tunnel mouth
+        slAng[i] = Math.random() * 6.2832;
+        slR[i] = r0 + Math.random() * (maxR - r0) * 0.25;
+        slSp[i] = 0.55 + Math.random() * 0.9;
+        continue;
+      }
+      var rr = slR[i] / maxR;
+      var a = gain * Math.min(1, (rr - 0.16) * 2.4) * (0.3 + slSp[i] * 0.45);
+      if (a <= 0.02) continue;
+      var L2 = slLen[i] * maxR * (0.5 + gain);
+      var ca = Math.cos(slAng[i]), sa = Math.sin(slAng[i]);
+      ctx.strokeStyle = 'rgba(195,218,255,' + a.toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.moveTo(cx + ca * slR[i], cy + sa * slR[i]);
+      ctx.lineTo(cx + ca * (slR[i] + L2), cy + sa * (slR[i] + L2));
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
   function renderRabbit() {
     if (!shipDirty) return;
     rbuf.fill(0);   // fully transparent: keep the starfield visible behind particles
@@ -1111,6 +1177,18 @@
   // ================= navigation update =================
   function updateNav(dt) {
     var want;
+    // v0.4 unified throttle: ↑/↓ ramp thrust in any mode (Shift = pitch trim, manual flight only).
+    // Key grammar now matches the chase cam: fore/aft keys push the ship fore/aft, ←/→ yaw.
+    if (keysOn['ArrowUp'] || keysOn['ArrowDown']) {
+      var dir = keysOn['ArrowUp'] ? 1 : -1;
+      if (shiftOn && mode === 'idle') {
+        pitch = Math.max(-1.45, Math.min(1.45, pitch + dir * 1.7 * dt));
+        updateBasis();
+      } else {
+        var w4 = mode === 'travel' ? Math.max(0, manualWarp + dir * 3.4 * dt) : manualWarp + dir * 3.4 * dt;
+        setManual(w4);
+      }
+    }
     if (mode === 'aiming' && targetIdx >= 0) {
       want = aimAt(targetIdx, false);
       var dYaw = want.yaw - yaw, dPitch = want.pitch - pitch;
@@ -1156,9 +1234,7 @@
       var st = 1.7 * dt;
       if (keysOn['ArrowLeft']) yaw -= st;
       if (keysOn['ArrowRight']) yaw += st;
-      if (keysOn['ArrowUp']) pitch += st * 0.72;
-      if (keysOn['ArrowDown']) pitch -= st * 0.72;
-      if (keysOn['ArrowLeft'] || keysOn['ArrowRight'] || keysOn['ArrowUp'] || keysOn['ArrowDown']) {
+      if (keysOn['ArrowLeft'] || keysOn['ArrowRight']) {
         pitch = Math.max(-1.45, Math.min(1.45, pitch));
         updateBasis();
       }
@@ -1175,6 +1251,9 @@
         vNow = Math.abs(vEase) > 0.001 ? vEase : 0;
       }
     }
+    // v0.4: attitude rates feed the chase-cam pose (bank on yaw, lift on pitch)
+    if (dt > 0) { yawVel = (yaw - prevYaw) / dt; pitchVel = (pitch - prevPitch) / dt; }
+    prevYaw = yaw; prevPitch = pitch;
   }
 
   var lastStatusStr = '';
@@ -1215,13 +1294,22 @@
     if (!sleeping) {
       updateNav(dt);
       renderStars();
+      renderSpeedLines(dt);
       if (params.rabbitOn) {
         renderFlame();
         renderRabbit();
         var jitA = Math.min(2.4, Math.abs(vNow) / 300);
         var jx2 = (Math.random() - 0.5) * jitA, jy2 = (Math.random() - 0.5) * jitA * 0.7;
-        ctx.setTransform(1, 0, 0, 1, 0, 0);   // physical px space: avoid dpr^2 offset after renderFlame
-        ctx.drawImage(off, (offX + jx2) * dpr, (offY + jy2) * dpr, IMG_W * scale * dpr, IMG_H * scale * dpr);
+        // v0.4 chase-cam pose: bank into turns (yaw rate), lift on pitch, subtle zoom with speed
+        var k4 = Math.min(1, dt * 4.5);
+        shipBank += (Math.max(-0.15, Math.min(0.15, yawVel * 0.5)) - shipBank) * k4;
+        shipPY += (Math.max(-14, Math.min(14, -pitchVel * 26)) - shipPY) * k4;
+        shipSc += ((1 + Math.min(0.055, Math.abs(vNow) * 4e-5)) - shipSc) * Math.min(1, dt * 2.2);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.translate(offX + IMG_W * scale / 2 + jx2, offY + IMG_H * scale / 2 + jy2);
+        ctx.rotate(shipBank); ctx.scale(shipSc, shipSc);
+        ctx.drawImage(off, -IMG_W * scale / 2, -IMG_H * scale / 2 + shipPY, IMG_W * scale, IMG_H * scale);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
       }
       updateHUD();
       updateAudio();
