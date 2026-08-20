@@ -30,8 +30,8 @@ window.SITE = {
         { t: 'p',      text: '段落文字' },
         { t: 'h',      text: '小节标题' },
         { t: 'quote',  text: '引用样式文字' },
-        { t: 'img',    src: 'assets/xx.jpg', cap: '图片说明' },
-        { t: 'gallery', items: [{ src: 'assets/a.jpg', cap: '说明' }, ...] },
+        { t: 'img',    src: 'assets/xx.jpg', cap: '图片说明', full: 'assets/xx_原尺寸.jpg' },
+        { t: 'gallery', items: [{ src: 'assets/a.jpg', cap: '说明', full: 'assets/a_原尺寸.jpg' }, ...] },
         { t: 'video',  src: 'https://player.bilibili.com/player.html?bvid=BV...', cap: '视频说明' },
         { t: 'links',  items: [{ label: '名称', url: 'https://...', desc: '一句话介绍' }] }
       ]
@@ -46,6 +46,7 @@ window.SITE = {
 |------|------|
 | 改文案 | 编辑 `content.js` 对应 `text` 字段，保存刷新 |
 | 加/换图 | 图片丢进 `assets/`，在 `img`/`gallery` 块里写 `src` |
+| 图片点开放大 | 面板里的图片本就可点击放大（灯箱）。想让大图用更清晰的原尺寸版本，加 `full: 'assets/xx_原尺寸.jpg'`（不写则直接展示 `src` 本身） |
 | 加视频 | 取 B 站「分享 → 嵌入代码」里的 iframe src（`player.bilibili.com/player.html?bvid=...`），填进 `video` 块。**视频文件本体永远不要放进仓库**（GitHub 单文件上限 100MB） |
 | 加板块 | 复制一段 `{ id, star, title, blocks: [...] }`，换一颗没用过的锚星 |
 | 删板块 | 整段删掉即可 |

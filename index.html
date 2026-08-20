@@ -103,6 +103,26 @@
     background: rgba(90, 30, 30, 0.35); border: 1px dashed rgba(255, 120, 120, 0.45); border-radius: 10px;
     color: #ffb0b0; font-size: 12px; }
   #panel #pnBody .gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  /* v0.5: clickable zoom affordance + focus ring on panel images */
+  #panel #pnBody figure.zoom { cursor: zoom-in; }
+  #panel #pnBody figure.zoom:hover img { filter: brightness(1.08); }
+  #panel #pnBody figure.zoom:focus-visible { outline: 2px solid rgba(140, 190, 255, 0.75); outline-offset: 2px;
+    border-radius: 10px; }
+  #lightbox { position: fixed; inset: 0; background: rgba(2, 4, 10, 0.9); display: none; z-index: 80;
+    align-items: center; justify-content: center; flex-direction: column; opacity: 0;
+    transition: opacity 0.18s ease; }
+  #lightbox.on { opacity: 1; }
+  #lightbox img { max-width: 92vw; max-height: 80vh; object-fit: contain; border-radius: 8px;
+    box-shadow: 0 10px 70px rgba(0, 0, 0, 0.7); }
+  #lbCap { color: #b9c4da; font-size: 12.5px; line-height: 1.6; margin-top: 12px; padding: 0 24px;
+    text-align: center; max-width: 78vw; }
+  #lightbox button { position: fixed; width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(140, 170, 230, 0.35);
+    background: rgba(12, 18, 32, 0.75); color: #d8e2f4; font-size: 20px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; backdrop-filter: blur(6px); }
+  #lightbox button:hover { background: rgba(30, 44, 74, 0.9); }
+  #lbClose { top: calc(14px + env(safe-area-inset-top)); right: 16px; }
+  #lbPrev { left: 10px; top: 50%; transform: translateY(-50%); }
+  #lbNext { right: 10px; top: 50%; transform: translateY(-50%); }
   #panel #pnBody .vid { margin: 10px 0; }
   #panel #pnBody .vid iframe { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 10px;
     background: #000; }
@@ -184,6 +204,14 @@
   <h3 id="pnTitle"></h3>
   <div id="pnMeta"></div>
   <div id="pnBody"></div>
+</div>
+<!-- v0.5: lightbox — click any image in the panel to view it full-size (← → to browse, ESC to close) -->
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="查看大图">
+  <button id="lbClose" type="button" aria-label="关闭大图">✕</button>
+  <button id="lbPrev" type="button" aria-label="上一张">‹</button>
+  <img id="lbImg" alt="">
+  <button id="lbNext" type="button" aria-label="下一张">›</button>
+  <div id="lbCap"></div>
 </div>
 <div id="hint">↑↓ 加速/倒退 · ←→ 转向 · Shift+↑↓ 俯仰 · 滚轮/双指调速 · 点星标前往板块 · 长按/右键星标直接阅读 · [ESC]关闭面板/中止航行</div>
 <div id="credit">恒星数据：HYG Database v4.1 (CC BY-SA 4.0) · astronexus · 板块内容见 content.js</div>
@@ -656,6 +684,11 @@
     if (hit >= 0) openSection(destByI[hit], false);   // right-click star -> section panel
   });
   window.addEventListener('keydown', function (e) {
+    if (lbOpen) {   // v0.5: lightbox owns the keys while open (arrows browse, ESC closes, ship must not steer)
+      if (e.key === 'Escape') { e.preventDefault(); closeLb(); return; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); lbNav(e.key === 'ArrowLeft' ? -1 : 1); return; }
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); return; }   // avoid page scroll / re-click
+    }
     if (e.key === 'Escape') {   // v2.4: layered — close star card > close confirm > abort nav
       if ($('panel').style.display === 'flex') {
         closePanel();
@@ -733,6 +766,20 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
     });
   }
+  // v0.5: lightbox set for the section currently on screen — rebuilt on every openSection
+  var panelImgs = [];
+  function makeZoomable(fig, full, cap) {
+    var idx = panelImgs.length;
+    panelImgs.push({ full: full, cap: cap || '' });
+    fig.classList.add('zoom');
+    fig.setAttribute('role', 'button');
+    fig.setAttribute('tabindex', '0');
+    fig.setAttribute('aria-label', '查看大图' + (cap ? '：' + cap : ''));
+    fig.addEventListener('click', function () { openLb(idx); });
+    fig.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openLb(idx); }
+    });
+  }
   function renderBlock(b, blk) {
     var el = null;
     if (blk.t === 'p') { el = document.createElement('p'); el.textContent = blk.text; }
@@ -748,6 +795,7 @@
       };
       el.appendChild(im);
       if (blk.cap) { var fc = document.createElement('figcaption'); fc.textContent = blk.cap; el.appendChild(fc); }
+      makeZoomable(el, blk.full || blk.src, blk.cap || '');   // v0.5: click to view full-size
     } else if (blk.t === 'gallery') {
       el = document.createElement('div'); el.className = 'gal';
       (blk.items || []).forEach(function (it) {
@@ -760,6 +808,7 @@
         };
         f.appendChild(g);
         if (it.cap) { var c2 = document.createElement('figcaption'); c2.textContent = it.cap; f.appendChild(c2); }
+        makeZoomable(f, it.full || it.src, it.cap || '');   // v0.5: click to view full-size
         el.appendChild(f);
       });
     } else if (blk.t === 'video') {
@@ -795,6 +844,7 @@
     $('pnMeta').innerHTML = meta.map(esc).join(' · ');
     var b = $('pnBody');
     b.innerHTML = '';   // drop old DOM: unloads lazy iframes/images from the previous section
+    panelImgs = [];     // v0.5: rebuild the lightbox set for this section
     (sec.blocks || []).forEach(function (blk) { renderBlock(b, blk); });
     b.scrollTop = 0;
     var pn = $('panel');
@@ -805,10 +855,49 @@
     $('pnClose').setAttribute('aria-label', '关闭内容面板');
   }
   function closePanel() {
+    if (lbOpen) closeLb();   // v0.5: the lightbox belongs to the panel — never outlive it
     $('panel').style.display = 'none';
     $('pnBody').innerHTML = '';   // unload embedded players
   }
   $('pnClose').onclick = closePanel;
+
+  // ================= v0.5 lightbox =================
+  var lbOpen = false, lbIdx = 0;
+  function showLb(i) {          // paint content at index i (no open/close side effects)
+    lbIdx = (i + panelImgs.length) % panelImgs.length;
+    var it = panelImgs[lbIdx], multi = panelImgs.length > 1;
+    $('lbImg').src = it.full; $('lbImg').alt = it.cap || '';
+    $('lbPrev').style.display = $('lbNext').style.display = multi ? 'flex' : 'none';
+    $('lbCap').textContent = multi
+      ? ((lbIdx + 1) + ' / ' + panelImgs.length + (it.cap ? ' · ' + it.cap : ''))
+      : (it.cap || '');
+  }
+  function openLb(i) {
+    if (!panelImgs.length) return;
+    showLb(i);
+    var box = $('lightbox');
+    box.style.display = 'flex';
+    requestAnimationFrame(function () { box.classList.add('on'); });
+    lbOpen = true;
+    keysOn = {};                // helm keys must not steer the ship while viewing
+    $('lbClose').focus();
+  }
+  function closeLb() {
+    var box = $('lightbox');
+    box.classList.remove('on');
+    lbOpen = false;
+    setTimeout(function () {     // wait for the fade-out before dropping the image
+      if (!lbOpen) { box.style.display = 'none'; $('lbImg').src = ''; }
+    }, 190);
+  }
+  function lbNav(d) { if (panelImgs.length) showLb(lbIdx + d); }
+  $('lbClose').onclick = function (e) { e.stopPropagation(); closeLb(); };
+  $('lbPrev').onclick = function (e) { e.stopPropagation(); lbNav(-1); };
+  $('lbNext').onclick = function (e) { e.stopPropagation(); lbNav(1); };
+  $('lightbox').addEventListener('click', function (e) {   // backdrop click closes; the image itself doesn't
+    if (e.target.tagName === 'IMG') return;
+    closeLb();
+  });
 
   // ================= engine audio (opt-in) =================
   var audioOn = false, actx = null, engGain = null, osc1 = null, osc2 = null;
