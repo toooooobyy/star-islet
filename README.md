@@ -48,7 +48,6 @@ window.SITE = {
 | 加/换图 | 图片丢进 `assets/`，在 `img`/`gallery` 块里写 `src` |
 | 图片点开放大 | 面板里的图片本就可点击放大（灯箱）。想让大图用更清晰的原尺寸版本，加 `full: 'assets/xx_原尺寸.jpg'`（不写则直接展示 `src` 本身） |
 | 加视频 | 取 B 站「分享 → 嵌入代码」里的 iframe src（`player.bilibili.com/player.html?bvid=...`），填进 `video` 块。**视频文件本体永远不要放进仓库**（GitHub 单文件上限 100MB） |
-| 换船 | `ships.js` 里是舰船图鉴（粒子数据由生成器产出）。想加新船：用生成器产出 `{id,name,desc,count,w,h,b64,nozzles,navlights}` 追加进 `window.SHIPS` 数组即可，机库 UI 自动列出 |
 | 加板块 | 复制一段 `{ id, star, title, blocks: [...] }`，换一颗没用过的锚星 |
 | 删板块 | 整段删掉即可 |
 
